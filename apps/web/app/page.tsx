@@ -156,8 +156,8 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
     controller.current = abort;
     let polling = false;
     refresh().catch(e => { if (!abort.signal.aborted) setError(errorText(e)); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
-    const interval = window.setInterval(async () => {
-      if (polling || abort.signal.aborted) return;
+    const poll = async () => {
+      if (polling || abort.signal.aborted || document.visibilityState !== "visible") return;
       polling = true;
       try {
         await refresh(false);
@@ -166,8 +166,15 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
       } finally {
         polling = false;
       }
-    }, 15_000);
-    return () => { window.clearInterval(interval); abort.abort(); };
+    };
+    const interval = window.setInterval(poll, 15_000);
+    const onVisible = () => { if (document.visibilityState === "visible") void poll(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      abort.abort();
+    };
   }, [refresh]);
   const staff = me?.role === "Officer" || me?.role === "Administrator";
   const reporting = staff || me?.role === "Advisor";
@@ -240,7 +247,7 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
         {me && tab === "Events" && <>
           <section className="dashboard-hero"><div><span className="hero-pill"><Icon name="spark" size={14} /> BUILT FOR WHAT’S NEXT</span><h2>Curiosity brings us together.<br />Let’s see where it takes us.</h2><p>Learn something new. Build something bold. Find your people.</p><button className="hero-link" onClick={() => document.getElementById("event-list")?.scrollIntoView({ behavior: "smooth" })}>Explore events <Icon name="arrow" size={17} /></button></div><div className="hero-visual" aria-hidden="true"><div className="hero-orbit" /><span>✳</span><small>IDEAS INTO<br />IMPACT</small></div></section>
           <section className="stat-grid" aria-label="Your club at a glance"><Stat label="Upcoming events" value={upcoming.length} icon="calendar" detail="More ways to get involved" /><Stat label="Your registrations" value={registrations.length} icon="ticket" detail="Your learning journey" /><Stat label="Events attended" value={attended} icon="chart" detail="Every experience counts" /></section>
-          <section id="event-list" className="events-section"><div className="section-title"><div><h2>Discover events <span className="count-pill">{events.length}</span></h2><p>Find the experience that speaks to you.</p></div><label className="search-input"><span aria-hidden="true">⌕</span><input aria-label="Search events" placeholder="Search events…" value={search} onChange={e => setSearch(e.target.value)} /></label></div><div className="filters" aria-label="Filter by event type">{["All", ...kinds].map(kind => <button key={kind} onClick={() => setFilter(kind)} className={filter === kind ? "selected" : ""} aria-pressed={filter === kind}>{kind === "All" ? "All events" : kind}</button>)}</div><p className="live-refresh">Availability, participation, and notifications refresh every 15 seconds. Spots are confirmed when you register.</p>
+          <section id="event-list" className="events-section"><div className="section-title"><div><h2>Discover events <span className="count-pill">{events.length}</span></h2><p>Find the experience that speaks to you.</p></div><label className="search-input"><span aria-hidden="true">⌕</span><input aria-label="Search events" placeholder="Search events…" value={search} onChange={e => setSearch(e.target.value)} /></label></div><div className="filters" aria-label="Filter by event type">{["All", ...kinds].map(kind => <button key={kind} onClick={() => setFilter(kind)} className={filter === kind ? "selected" : ""} aria-pressed={filter === kind}>{kind === "All" ? "All events" : kind}</button>)}</div><p className="live-refresh">Availability, participation, and notifications refresh every 15 seconds while this tab is visible. Spots are confirmed when you register.</p>
           {visibleEvents.length === 0 ? <Empty title={events.length ? "No events match your search" : "Something great is on the horizon"}>{events.length ? "Try a different keyword or event type." : "New club events will appear here. Check back soon for your next opportunity to connect."}</Empty> : <div className="event-grid">{visibleEvents.map(event => {
             const past = new Date(event.starts_at) <= new Date();
             const full = event.registered_count >= event.capacity;
