@@ -1,0 +1,25 @@
+{
+  "name": "ai-club-member-event-management-platform",
+  "version": "1.0.0",
+  "description": "Empowering AI clubs with a modern digital platform for member engagement, event management, and data-driven growth.",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:web": "npm run dev --workspace=web",
+    "dev:api": "npm run dev --workspace=api",
+    "build": "npm run build --workspace=web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspace=api",
+    "db:migrate": "npm run db:migrate --workspace=api",
+    "worker": "npm run worker --workspace=api"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phuongcodes2025-sys/AI-Club-Member-Event-Management-Platform"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

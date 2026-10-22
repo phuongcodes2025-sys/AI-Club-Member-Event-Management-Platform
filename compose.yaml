@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ai_club
+      POSTGRES_USER: club
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for the local database}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - club-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U club -d ai_club"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  club-data:
