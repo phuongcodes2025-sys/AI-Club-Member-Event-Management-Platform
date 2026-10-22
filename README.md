@@ -2,7 +2,7 @@
 
 Welcome! 👋
 
-This project helps AI clubs stay organized and have more fun.
+This project helps Dallas College AI Club stay organized and have more fun.
 
 ## What this platform does
 
@@ -18,9 +18,9 @@ This platform makes it easier by putting everything in one place.
 
 ## Simple idea
 
-Think of this like a digital helper for your AI club.  
+Think of this like a digital helper for your AI Club.  
 It helps leaders and members work together better.
 
 ---
 
-Made for AI clubs that want to learn, connect, and grow 🚀
+Made for AI Club that want to learn, connect, and grow 🚀
