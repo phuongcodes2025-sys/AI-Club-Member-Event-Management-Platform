@@ -102,6 +102,7 @@ export function createApp({ pool, authenticate, config = {} }) {
   if (!pool || typeof authenticate !== 'function') throw new Error('Pool and authentication middleware are required');
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', config.trustProxyHops || 0);
   app.use(helmet());
   const webOrigin = config.webOrigin || process.env.WEB_ORIGIN || 'http://localhost:3000';
   app.use(cors({ origin(origin, callback) {
@@ -168,10 +169,11 @@ export function createApp({ pool, authenticate, config = {} }) {
   });
   app.patch('/api/events/:id', requireRole(staff), async (req, res) => {
     const id = parse(uuid, req.params.id);
-    const data = parse(eventInput.partial().extend({ cancelled: z.boolean().optional() })
+    const data = parse(eventInput.extend({ description: z.string().max(10000) }).partial().extend({ cancelled: z.boolean().optional() })
       .refine(x => Object.keys(x).length > 0), req.body);
     const event = await transaction(pool, async client => {
       const old = await lockedEvent(client, id);
+      if (old.cancelled_at && data.cancelled === false) throw fail(409, 'Event cancellation is permanent');
       const merged = { ...old, ...data };
       if (new Date(merged.ends_at) <= new Date(merged.starts_at)) throw fail(400, 'Event end must follow start');
       const count = await client.query('SELECT count(*)::int n FROM registrations WHERE event_id=$1', [id]);

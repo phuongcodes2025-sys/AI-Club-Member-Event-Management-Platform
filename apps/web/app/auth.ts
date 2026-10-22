@@ -37,7 +37,7 @@ export function getAuth() {
   return application;
 }
 
-export async function apiRequest(account: AccountInfo, path: string, options: RequestInit = {}) {
+export async function apiRequest(account: AccountInfo, path: string, options: RequestInit = {}, allowInteraction = true) {
   const auth = await getAuth();
   const request = { scopes: [environment.scope!], account };
   let result: AuthenticationResult;
@@ -45,6 +45,9 @@ export async function apiRequest(account: AccountInfo, path: string, options: Re
     result = await auth.acquireTokenSilent(request);
   } catch (error) {
     if (!(error instanceof InteractionRequiredAuthError)) throw error;
+    if (!allowInteraction) {
+      throw new Error("Your Microsoft session needs attention. Sign out and sign in again to continue.");
+    }
     if (!interaction) {
       interaction = auth.acquireTokenPopup(request).finally(() => { interaction = undefined; });
     }

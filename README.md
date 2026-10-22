@@ -18,6 +18,8 @@ A centralized platform for managing AI Club members, events, attendance, notific
 
 This is a runnable initial implementation, not an already provisioned Azure service. Microsoft sign-in requires your tenant's app registrations. External delivery requires provider configuration; no credentials, sample accounts, or authentication bypasses are included.
 
+Event cancellation is permanent, keeping attendance history and Outlook state consistent. Create a replacement event if needed. Authenticated dashboards refresh capacity and personal updates every 15 seconds; registration always rechecks availability transactionally.
+
 ## Architecture and roles
 
 | Component | Implementation |
@@ -119,6 +121,7 @@ docker build --target web -t ai-club-web \
 - Run `npm run db:migrate` once as a release job using the API image before starting the new API/worker revision. Migrations are versioned and serialized with a database advisory lock.
 - Run the worker image with command `npm run worker`, no public ingress, and at least one always-on replica. Set minimum replica counts for the HTTP services as appropriate.
 - Set `WEB_ORIGIN`, the public API URL, and Entra production SPA redirects to the exact HTTPS deployment origins. Enforce HTTPS and configure private database networking/firewall access.
+- Set `TRUST_PROXY_HOPS` to the exact number of trusted ingress proxies only when every API request must traverse those proxies. The default `0` ignores forwarded IP headers. Verify this for your Azure network topology so rate limiting uses member IPs rather than a shared ingress IP; never blindly trust arbitrary forwarded headers or enable an unrestricted proxy trust setting.
 - Use Key Vault/managed secret references, database backups, Azure Monitor, log retention, and restricted operator access. Avoid logging access tokens, ticket tokens, email bodies, or webhook URLs. Validate health, sign-in, registration, real delivery, and backups before admitting members.
 
 Azure resources, tenant registrations, secrets, monitoring alerts, and organizational consent must be provisioned by the deploying club; this repository does not create or access them automatically.

@@ -7,6 +7,10 @@ export function loadConfig(env = process.env) {
   }
   const port = Number(env.PORT || 4000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
+  const trustProxyHops = Number(env.TRUST_PROXY_HOPS ?? 0);
+  if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0 || String(env.TRUST_PROXY_HOPS ?? '0').trim() === '') {
+    throw new Error('TRUST_PROXY_HOPS must be a nonnegative integer');
+  }
   const webOrigin = env.WEB_ORIGIN || 'http://localhost:3000';
   if (new URL(webOrigin).origin !== webOrigin) throw new Error('WEB_ORIGIN must be an origin');
   return {
@@ -16,6 +20,7 @@ export function loadConfig(env = process.env) {
     requiredScope: env.ENTRA_REQUIRED_SCOPE || 'access_as_user',
     webOrigin,
     port,
+    trustProxyHops,
     adminObjectIds: (env.ADMIN_OBJECT_IDS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
   };
 }

@@ -58,4 +58,10 @@ test('configuration is validated only when loaded', () => {
   assert.equal(config.requiredScope, 'access_as_user');
   assert.equal(config.port, 4000);
   assert.equal(config.webOrigin, 'http://localhost:3000');
+  assert.equal(config.trustProxyHops, 0);
+  const base = { DATABASE_URL: 'postgres://x', ENTRA_TENANT_ID: tenantId, ENTRA_API_AUDIENCE: 'api' };
+  assert.equal(loadConfig({ ...base, TRUST_PROXY_HOPS: '2' }).trustProxyHops, 2);
+  for (const value of ['-1', '1.5', 'NaN', 'Infinity', '', ' ', '9007199254740992']) {
+    assert.throws(() => loadConfig({ ...base, TRUST_PROXY_HOPS: value }), /TRUST_PROXY_HOPS/);
+  }
 });

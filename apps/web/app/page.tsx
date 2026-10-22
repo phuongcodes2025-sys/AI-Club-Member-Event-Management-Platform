@@ -91,7 +91,7 @@ export default function Home() {
         <h1>Big ideas.<br />Real connections.<br /><span>Your AI community.</span></h1>
         <p className="welcome-description">The next chapter of AI starts with us. Discover hands-on experiences, meet your people, and turn curiosity into something extraordinary.</p>
         {error && <div className="notice error" role="alert">{error}</div>}
-        {!configured ? <div className="setup-panel"><h2>Let’s connect your club</h2><p>Microsoft sign-in needs to be configured before you can access club data. No sample accounts or data are used.</p><p>Set these public environment variables in <code>apps/web/.env.local</code>, then restart the web app:</p><ul>{["NEXT_PUBLIC_ENTRA_CLIENT_ID", "NEXT_PUBLIC_ENTRA_TENANT_ID", "NEXT_PUBLIC_ENTRA_API_SCOPE"].map(key => <li key={key}><code>{key}</code></li>)}</ul><p>Use your API’s delegated <code>access_as_user</code> scope. Register this site’s origin as an Entra SPA redirect URI. Your administrator can also set <code>NEXT_PUBLIC_API_URL</code> (default: localhost:4000) and <code>NEXT_PUBLIC_ENTRA_REDIRECT_URI</code>. Never put a client secret in the browser.</p></div> :
+        {!configured ? <div className="setup-panel"><h2>Let’s connect your club</h2><p>Microsoft sign-in needs to be configured before you can access club data. No sample accounts or data are used.</p><p>Set these public environment variables in <code>apps/web/.env.local</code>, then restart the development server (or rebuild the production app):</p><ul>{["NEXT_PUBLIC_ENTRA_CLIENT_ID", "NEXT_PUBLIC_ENTRA_TENANT_ID", "NEXT_PUBLIC_ENTRA_API_SCOPE"].map(key => <li key={key}><code>{key}</code></li>)}</ul><p>Use your API’s delegated <code>access_as_user</code> scope. Register this site’s origin as an Entra SPA redirect URI. Your administrator can also set <code>NEXT_PUBLIC_API_URL</code> (default: localhost:4000) and <code>NEXT_PUBLIC_ENTRA_REDIRECT_URI</code>. Never put a client secret in the browser.</p></div> :
           <><button className="button primary sign-in" onClick={login} disabled={!ready || busy}><span className="microsoft-mark"><i /><i /><i /><i /></span>{!ready ? "Connecting…" : busy ? "Opening Microsoft…" : "Continue with Microsoft"}<Icon name="arrow" /></button><p className="sign-in-note">Your club account. One secure sign-in.</p></>}
       </section>
       <section className="welcome-art" aria-label="Explore, build, and belong with AI Club">
@@ -132,22 +132,41 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
   const [qr, setQr] = useState<Registration | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<ClubEvent | null>(null);
   const controller = useRef<AbortController | null>(null);
-  const request = useCallback(async (path: string, options?: RequestInit) => {
-    return apiRequest(account, path, { ...options, signal: controller.current?.signal });
+  const refreshVersion = useRef(0);
+  const request = useCallback(async (path: string, options?: RequestInit, allowInteraction = true) => {
+    return apiRequest(account, path, { ...options, signal: controller.current?.signal }, allowInteraction);
   }, [account]);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (allowInteraction = true) => {
+    const version = ++refreshVersion.current;
     const [profile, eventData, participation, updates] = await Promise.all([
-      request("/api/me").then(r => r.json()), request("/api/events").then(r => r.json()),
-      request("/api/me/registrations").then(r => r.json()), request("/api/notifications").then(r => r.json()),
+      request("/api/me", undefined, allowInteraction).then(r => r.json()), request("/api/events", undefined, allowInteraction).then(r => r.json()),
+      request("/api/me/registrations", undefined, allowInteraction).then(r => r.json()), request("/api/notifications", undefined, allowInteraction).then(r => r.json()),
     ]);
-    if (controller.current?.signal.aborted) return;
+    if (controller.current?.signal.aborted || version !== refreshVersion.current) return;
     setMe(profile); setEvents(eventData); setRegistrations(participation); setNotifications(updates);
+    setTab(current => {
+      if (current === "Check-in" && profile.role !== "Officer" && profile.role !== "Administrator") return "Events";
+      if ((current === "Members" || current === "Reports") && profile.role === "Member") return "Events";
+      return current;
+    });
   }, [request]);
   useEffect(() => {
     const abort = new AbortController();
     controller.current = abort;
+    let polling = false;
     refresh().catch(e => { if (!abort.signal.aborted) setError(errorText(e)); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
-    return () => { abort.abort(); };
+    const interval = window.setInterval(async () => {
+      if (polling || abort.signal.aborted) return;
+      polling = true;
+      try {
+        await refresh(false);
+      } catch (e) {
+        if (!abort.signal.aborted) setError(errorText(e));
+      } finally {
+        polling = false;
+      }
+    }, 15_000);
+    return () => { window.clearInterval(interval); abort.abort(); };
   }, [refresh]);
   const staff = me?.role === "Officer" || me?.role === "Administrator";
   const reporting = staff || me?.role === "Advisor";
@@ -162,13 +181,21 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
   async function mutate(action: () => Promise<unknown>, message: string) {
     if (busy) return;
     setBusy(true); setError(""); setSuccess("");
+    let saved = false;
     try {
       await action();
+      saved = true;
       await refresh();
       if (tab === "Members") setMembers(await request("/api/members").then(r => r.json()));
       setSuccess(message);
       return true;
-    } catch (e) { if (!controller.current?.signal.aborted) setError(errorText(e)); return false; }
+    } catch (e) {
+      if (!controller.current?.signal.aborted) {
+        setError(`${saved ? "Your change was saved, but refreshing failed. " : ""}${errorText(e)}`);
+        if (saved) setSuccess(message);
+      }
+      return saved;
+    }
     finally { setBusy(false); }
   }
   async function download(path: string, filename: string) {
@@ -190,7 +217,7 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
   function selectTab(next: Tab) {
     if (next === tab) return;
     setTab(next); setError(""); setSuccess("");
-    if (next === "Reports" || next === "Members") setLoading(true);
+    setLoading(next === "Reports" || next === "Members");
   }
   async function retry() {
     await mutate(async () => {
@@ -212,7 +239,7 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
         {me && tab === "Events" && <>
           <section className="dashboard-hero"><div><span className="hero-pill"><Icon name="spark" size={14} /> BUILT FOR WHAT’S NEXT</span><h2>Curiosity brings us together.<br />Let’s see where it takes us.</h2><p>Learn something new. Build something bold. Find your people.</p><button className="hero-link" onClick={() => document.getElementById("event-list")?.scrollIntoView({ behavior: "smooth" })}>Explore events <Icon name="arrow" size={17} /></button></div><div className="hero-visual" aria-hidden="true"><div className="hero-orbit" /><span>✳</span><small>IDEAS INTO<br />IMPACT</small></div></section>
           <section className="stat-grid" aria-label="Your club at a glance"><Stat label="Upcoming events" value={upcoming.length} icon="calendar" detail="More ways to get involved" /><Stat label="Your registrations" value={registrations.length} icon="ticket" detail="Your learning journey" /><Stat label="Events attended" value={attended} icon="chart" detail="Every experience counts" /></section>
-          <section id="event-list" className="events-section"><div className="section-title"><div><h2>Discover events <span className="count-pill">{events.length}</span></h2><p>Find the experience that speaks to you.</p></div><label className="search-input"><span aria-hidden="true">⌕</span><input aria-label="Search events" placeholder="Search events…" value={search} onChange={e => setSearch(e.target.value)} /></label></div><div className="filters" aria-label="Filter by event type">{["All", ...kinds].map(kind => <button key={kind} onClick={() => setFilter(kind)} className={filter === kind ? "selected" : ""} aria-pressed={filter === kind}>{kind === "All" ? "All events" : kind}</button>)}</div>
+          <section id="event-list" className="events-section"><div className="section-title"><div><h2>Discover events <span className="count-pill">{events.length}</span></h2><p>Find the experience that speaks to you.</p></div><label className="search-input"><span aria-hidden="true">⌕</span><input aria-label="Search events" placeholder="Search events…" value={search} onChange={e => setSearch(e.target.value)} /></label></div><div className="filters" aria-label="Filter by event type">{["All", ...kinds].map(kind => <button key={kind} onClick={() => setFilter(kind)} className={filter === kind ? "selected" : ""} aria-pressed={filter === kind}>{kind === "All" ? "All events" : kind}</button>)}</div><p className="live-refresh">Availability, participation, and notifications refresh every 15 seconds. Spots are confirmed when you register.</p>
           {visibleEvents.length === 0 ? <Empty title={events.length ? "No events match your search" : "Something great is on the horizon"}>{events.length ? "Try a different keyword or event type." : "New club events will appear here. Check back soon for your next opportunity to connect."}</Empty> : <div className="event-grid">{visibleEvents.map(event => {
             const past = new Date(event.starts_at) <= new Date();
             const full = event.registered_count >= event.capacity;
@@ -223,14 +250,14 @@ function Dashboard({ account, logout }: { account: AccountInfo; logout: () => Pr
         {me && tab === "My participation" && <section className="panel">{registrations.length === 0 ? <Empty title="Your journey starts here">Register for an event to see it here, save it to your calendar, and access your personal check-in QR.</Empty> : registrations.map(r => <article className="participation-row" key={r.id}><div className="date-tile"><strong>{new Date(r.starts_at).getDate()}</strong><span>{new Date(r.starts_at).toLocaleDateString(undefined, { month: "short" })}</span></div><div className="participation-detail"><span className="badge">{r.kind}</span><h2>{r.title}</h2><p>{date(r.starts_at)} · {time(r.starts_at)} · {r.location}</p><span className={`attendance-label ${r.checked_in_at ? "checked" : ""}`}>{r.cancelled_at ? "Event cancelled" : r.checked_in_at ? `Attended · ${date(r.checked_in_at)}` : new Date(r.ends_at) < new Date() ? "Ended · Not checked in" : "Registered · See you there"}</span></div><div className="row-actions"><button className="button secondary" disabled={busy} onClick={() => download(`/api/events/${r.event_id}/calendar`, "ai-club-event.ics")}>Calendar</button><button className="button primary" disabled={Boolean(r.cancelled_at || r.checked_in_at) || new Date(r.ends_at) < new Date()} onClick={() => setQr(r)}><Icon name="scan" size={17} />Check-in QR</button>{!r.cancelled_at && new Date(r.starts_at) > new Date() && <button className="text-button danger-text" disabled={busy} onClick={() => mutate(() => request(`/api/events/${r.event_id}/register`, { method: "DELETE" }), "Registration cancelled.")}>Cancel registration</button>}</div></article>)}</section>}
         {me && tab === "Profile" && <ProfileForm key={`${me.id}-${me.name}-${me.bio}-${me.interests}`} me={me} busy={busy} save={body => mutate(() => request("/api/me", { method: "PATCH", body: JSON.stringify(body) }), "Your profile is updated.")} />}
         {me && tab === "Notifications" && <section className="panel">{notifications.length === 0 ? <Empty title="You’re all caught up">Club updates and event reminders will appear here.</Empty> : notifications.map(n => <article className={`notification-row ${n.read_at ? "" : "unread"}`} key={n.id}><span className="feature-icon"><Icon name="bell" /></span><div><h2>{n.title}{!n.read_at && <span className="unread-label">New</span>}</h2><p>{n.body}</p><small>{date(n.created_at)} · {time(n.created_at)}</small></div>{!n.read_at && <button className="button secondary" disabled={busy} onClick={() => mutate(() => request(`/api/notifications/${n.id}/read`, { method: "PATCH" }), "Notification marked as read.")}>Mark as read</button>}</article>)}</section>}
-        {me && tab === "Reports" && reporting && report && <><div className="section-title"><h2>Community overview</h2><button className="button primary" disabled={busy} onClick={() => download("/api/reports/export", "ai-club-report.csv")}>Export CSV <Icon name="arrow" size={16} /></button></div><div className="stat-grid report-stats"><Stat label="Members" value={report.members} icon="users" /><Stat label="Events" value={report.events} icon="calendar" /><Stat label="Registrations" value={report.registrations} icon="ticket" /><Stat label="Attendance" value={report.attendance} icon="scan" /><Stat label="Engagement rate" value={`${Number(report.engagement_rate).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`} icon="chart" /></div><ReportTable title="By event type" rows={report.by_kind.map(r => ({ label: r.kind, ...r }))} /><ReportTable title="By event" rows={report.by_event.map(r => ({ label: r.title, ...r }))} /><ReportTable title="By member" rows={report.by_member.map(r => ({ label: r.name, ...r }))} /></>}
+        {me && tab === "Reports" && reporting && report && <><div className="section-title"><h2>Community overview</h2><button className="button primary" disabled={busy} onClick={() => download("/api/reports/export", "ai-club-report.csv")}>Export CSV <Icon name="arrow" size={16} /></button></div><div className="stat-grid report-stats"><Stat label="Members" value={report.members} icon="users" /><Stat label="Events" value={report.events} icon="calendar" /><Stat label="Registrations" value={report.registrations} icon="ticket" /><Stat label="Attendance" value={report.attendance} icon="scan" /><Stat label="Engagement rate" value={Number(report.engagement_rate).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })} icon="chart" /></div><ReportTable title="By event type" rows={report.by_kind.map(r => ({ label: r.kind, ...r }))} /><ReportTable title="By event" rows={report.by_event.map(r => ({ label: r.title, ...r }))} /><ReportTable title="By member" rows={report.by_member.map(r => ({ label: r.name, ...r }))} /></>}
         {me && tab === "Members" && reporting && <section className="panel"><div className="section-title panel-title"><h2>Club directory <span className="count-pill">{members.length}</span></h2></div>{members.length === 0 && !loading ? <Empty title="No members to display">Your club directory will appear here.</Empty> : <div className="table-scroll"><table><caption className="sr-only">Club members and roles</caption><thead><tr><th scope="col">Member</th><th scope="col">Interests</th><th scope="col">Role</th></tr></thead><tbody>{members.map(m => <tr key={m.id}><td><strong>{m.name}</strong><small>{m.email}</small>{m.bio && <p className="member-bio">{m.bio}</p>}</td><td>{m.interests || "Not added yet"}</td><td>{me.role === "Administrator" ? <select aria-label={`Role for ${m.name}`} value={m.role} disabled={busy} onChange={e => mutate(() => request(`/api/members/${m.id}/role`, { method: "PATCH", body: JSON.stringify({ role: e.target.value }) }), `${m.name}’s role updated.`)}>{roles.map(role => <option key={role}>{role}</option>)}</select> : <span className="badge">{m.role}</span>}</td></tr>)}</tbody></table></div>}</section>}
         {me && tab === "Check-in" && staff && <CheckinForm busy={busy} submit={token => mutate(() => request("/api/attendance/check-in", { method: "POST", body: JSON.stringify({ token }) }), "Attendance recorded. Welcome to the event!")} />}
         <footer className="dashboard-footer"><span>AI Club · A little curiosity goes a long way.</span><span>Learn. Connect. Create.</span></footer>
       </main>
     </div>
     {editor && <Modal title={editor === "new" ? "Create an event" : "Edit event"} close={() => { if (!busy) setEditor(null); }}><EventForm event={editor === "new" ? undefined : editor} busy={busy} save={async body => { const ok = await mutate(() => request(editor === "new" ? "/api/events" : `/api/events/${editor.id}`, { method: editor === "new" ? "POST" : "PATCH", body: JSON.stringify(body) }), editor === "new" ? "Event created. Let the connections begin!" : "Event updated."); if (ok) setEditor(null); }} />{error && <p className="form-error" role="alert">{error}</p>}</Modal>}
-    {confirmCancel && <Modal title="Cancel this event?" close={() => { if (!busy) setConfirmCancel(null); }}><p>Cancel <strong>{confirmCancel.title}</strong>? Members will no longer be able to register. Existing registrations will show the cancellation.</p><div className="form-actions"><button className="button secondary" disabled={busy} onClick={() => setConfirmCancel(null)}>Keep event</button><button className="button danger" disabled={busy} onClick={async () => { const ok = await mutate(() => request(`/api/events/${confirmCancel.id}`, { method: "PATCH", body: JSON.stringify({ cancelled: true }) }), "Event cancelled."); if (ok) setConfirmCancel(null); }}>{busy ? "Cancelling…" : "Cancel event"}</button></div>{error && <p role="alert" className="form-error">{error}</p>}</Modal>}
+    {confirmCancel && <Modal title="Cancel this event?" close={() => { if (!busy) setConfirmCancel(null); }}><p>Cancel <strong>{confirmCancel.title}</strong>? Cancellation is permanent. Members will no longer be able to register, and existing registrations will show the cancellation.</p><div className="form-actions"><button className="button secondary" disabled={busy} onClick={() => setConfirmCancel(null)}>Keep event</button><button className="button danger" disabled={busy} onClick={async () => { const ok = await mutate(() => request(`/api/events/${confirmCancel.id}`, { method: "PATCH", body: JSON.stringify({ cancelled: true }) }), "Event cancelled."); if (ok) setConfirmCancel(null); }}>{busy ? "Cancelling…" : "Cancel event"}</button></div>{error && <p role="alert" className="form-error">{error}</p>}</Modal>}
     {qr && <Modal title="Your event check-in" close={() => setQr(null)}><QrCode registration={qr} request={request} /></Modal>}
   </div>;
 }

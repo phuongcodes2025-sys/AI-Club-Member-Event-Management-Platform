@@ -8,6 +8,12 @@ import { migrate } from '../src/migrate.js';
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) console.warn('PostgreSQL integration tests skipped: set TEST_DATABASE_URL explicitly.');
 
+test('proxy trust defaults to zero and honors explicitly configured hop count', () => {
+  const options = { pool: {}, authenticate(req, res, next) { next(); } };
+  assert.equal(createApp(options).get('trust proxy'), 0);
+  assert.equal(createApp({ ...options, config: { trustProxyHops: 2 } }).get('trust proxy'), 2);
+});
+
 test('PostgreSQL API: role boundaries, atomic capacity, cancellation, history, QR, exports and reports', { skip: !databaseUrl }, async t => {
   const schema = `api_test_${randomUUID().replaceAll('-', '')}`;
   const admin = randomUUID(), member = randomUUID(), second = randomUUID(), advisor = randomUUID(), officer = randomUUID();
@@ -145,6 +151,10 @@ test('PostgreSQL API: role boundaries, atomic capacity, cancellation, history, Q
       assert.equal((await request(`/api/events/${id}`, { method: 'PATCH', as: officer, body: { capacity: 1 } })).status, 409);
       assert.equal((await json(`/api/events/${id}`)).body.capacity, 2);
       assert.equal((await request(`/api/events/${id}`, { method: 'PATCH', as: officer, body: { cancelled: true } })).status, 200);
+      const reactivation = await json(`/api/events/${id}`, { method: 'PATCH', as: officer, body: { cancelled: false } });
+      assert.equal(reactivation.status, 409);
+      assert.equal(reactivation.body.error, 'Event cancellation is permanent');
+      assert.ok((await json(`/api/events/${id}`)).body.cancelled_at);
       const reg = (await json('/api/me/registrations', { as: member })).body.find(x => x.event_id === id);
       assert.equal((await request('/api/attendance/check-in', { method: 'POST', as: officer, body: { token: reg.checkin_token } })).status, 409);
       assert.equal((await request(`/api/events/${id}/register`, { method: 'POST', as: admin })).status, 409);
@@ -164,6 +174,24 @@ test('PostgreSQL API: role boundaries, atomic capacity, cancellation, history, Q
       assert.ok([[200,409],[409,201]].some(expected => expected.every((status,i) => raced[i].status === status)));
       const detail = (await json(`/api/events/${e.id}`)).body;
       assert.ok(detail.capacity >= detail.registered_count);
+    });
+    await t.test('partial event edits preserve omitted descriptions and reject empty patches', async () => {
+      const description = 'A description that must survive partial edits.';
+      const { body: e } = await json('/api/events', { method: 'POST', as: officer, body: newEvent({ description }) });
+      const capacityUpdate = await json(`/api/events/${e.id}`, { method: 'PATCH', as: officer, body: { capacity: 2 } });
+      assert.equal(capacityUpdate.status, 200);
+      assert.equal(capacityUpdate.body.description, description);
+      const titleUpdate = await json(`/api/events/${e.id}`, { method: 'PATCH', as: officer, body: { title: 'Renamed workshop' } });
+      assert.equal(titleUpdate.status, 200);
+      assert.equal(titleUpdate.body.description, description);
+      assert.equal((await request(`/api/events/${e.id}`, { method: 'PATCH', as: officer, body: {} })).status, 400);
+      const persisted = (await json(`/api/events/${e.id}`)).body;
+      assert.equal(persisted.description, description);
+      assert.equal(persisted.title, 'Renamed workshop');
+      assert.equal(persisted.capacity, 2);
+      const clearDescription = await json(`/api/events/${e.id}`, { method: 'PATCH', as: officer, body: { description: '' } });
+      assert.equal(clearDescription.status, 200);
+      assert.equal(clearDescription.body.description, '');
     });
     await t.test('rescheduling resets reminder eligibility and removes pending reminder jobs by registration', async () => {
       const { body: e } = await json('/api/events', { method: 'POST', as: officer, body: newEvent() });
